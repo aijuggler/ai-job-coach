@@ -1,1 +1,8 @@
-# TODO: Configure logging formatters & handlers (M0/M1)
+import logging
+
+def setup_logging(level: str = "INFO"):
+    logging.basicConfig(
+        level=getattr(logging, level.upper(), logging.INFO),
+        format="%(asctime)s | %(levelname)s | %(name)s | %(message)s"
+    )
+    logging.getLogger(__name__).info("Logging initialized at %s", level)
