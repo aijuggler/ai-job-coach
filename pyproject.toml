@@ -1,0 +1,11 @@
+[project]
+name = "llm_interview_coach"
+version = "0.0.1"
+description = "LLM-Powered Job Interview Coach (skeleton)"
+requires-python = ">=3.10"
+
+[tool.black]
+line-length = 100
+
+[tool.isort]
+profile = "black"
