@@ -5,7 +5,7 @@ from app.utils.docx_loader import docx_bytes_to_text
 from app.pipeline.extraction import extract_pipeline
 from app.models.resume import ResumeProfile
 from app.models.job import JobProfile
-from app.services.llm import llm  # shared instance
+from app.services.llm import llm_deterministic  # shared instance
 
 class ExtractionAgent:
     """
@@ -13,7 +13,7 @@ class ExtractionAgent:
     """
 
     def __init__(self, llm_instance=None):
-        self.llm = llm_instance or llm
+        self.llm = llm_instance or llm_deterministic
 
     def run(
         self,
