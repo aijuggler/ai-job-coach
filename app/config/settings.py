@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     azure_openai_api_version: str = Field(None, env="AZURE_OPENAI_API_VERSION")
     azure_openai_chat_deployment: str | None = Field(None, env="AZURE_OPENAI_CHAT_DEPLOYMENT")
     azure_openai_embedding_deployment: str | None = Field(None, env="AZURE_OPENAI_EMBEDDING_DEPLOYMENT")
+    azure_speech_key: str | None = Field(default=None, env="AZURE_SPEECH_KEY")
+    azure_speech_region: str | None = Field(default=None, env="AZURE_SPEECH_REGION")
+
 
 
     max_chars: int = 15000  # truncate long docs defensively

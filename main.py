@@ -1,5 +1,6 @@
 import streamlit as st
 from collections import defaultdict
+import io, numpy as np, soundfile as sf
 
 from app.config.settings import settings
 from app.config.logging import setup_logging
@@ -15,7 +16,6 @@ from app.models.question import Question
 # ---------- Init ----------
 setup_logging(settings.log_level)
 st.set_page_config(page_title="Interview Coach – M1‑M4", layout="wide")
-
 st.title("🧠 LLM Interview Coach – Extraction ▶ Gap ▶ Questions ▶ Interview")
 
 # ------------------------------------------------------------------
@@ -187,7 +187,7 @@ if "interview_session" not in st.session_state:
     st.session_state.interview_session = None
 
 def _rerun():
-    st.rerun()                     # Streamlit ≥1.26; swap to experimental_rerun() if older
+    st.rerun()
 
 cols = st.columns(3)
 start = cols[0].button("🎬 Start Interview", disabled="questions" not in st.session_state)
@@ -196,15 +196,18 @@ reset  = cols[2].button("♻️ Reset",  disabled=st.session_state.interview_ses
 
 # ---------- start ----------
 if start:
-    qs_models = [Question(**d) for d in st.session_state.questions]  # re‑hydrate dicts
+    qs_models = [Question(**d) for d in st.session_state.questions]
     sess = interview_agent.start("candidate_001", qs_models)
     st.session_state.interview_session = sess
     _rerun()
 
 # ---------- finish ----------
 if finish and st.session_state.interview_session:
-    interview_agent.finish(st.session_state.interview_session)
-    st.success("Session finished & saved.")
+    sess = st.session_state.interview_session
+    interview_agent.finish(sess)
+    from app.agents import ProgressAgent
+    ProgressAgent().save(sess)
+    st.success("Session saved.")
     _rerun()
 
 # ---------- reset ----------
@@ -212,6 +215,14 @@ if reset:
     st.session_state.interview_session = None
     st.success("Session reset.")
     _rerun()
+
+# ---------- feedback helper ----------
+def show_feedback(fb):
+    st.success(f"Score: **{fb.score}/5**")
+    st.caption(f"Correct {fb.dimensions['correctness']} · "
+               f"Clarity {fb.dimensions['clarity']} · "
+               f"Depth {fb.dimensions['depth']}")
+    st.write(f"**Suggestion:** {fb.suggestions}")
 
 # ---------- live session ----------
 sess = st.session_state.interview_session
@@ -221,29 +232,63 @@ if sess:
     else:
         q = interview_agent.current_question(sess)
         st.markdown(f"**Q{sess.current_index+1}/{len(sess.questions)}** – {q.text}")
-        ans_key   = f"ans_{q.id}"
-        ans_input = st.text_area("Your answer", key=ans_key, height=160)
 
-        if st.button("Submit Answer", key=f"submit_{q.id}"):
-            if ans_input.strip():
-                # record answer & get feedback (M5)
-                feedback = interview_agent.answer(sess, ans_input.strip())
+        # --- choose input mode ---
+        audio_mode = st.checkbox(
+            "🎙️ Answer with microphone or audio file", key=f"audio_mode_{q.id}", value=False
+        )
 
-                # display feedback
-                st.success(f"Score: **{feedback.score}/5**")
-                st.caption(
-                    f"Correctness {feedback.dimensions['correctness']} · "
-                    f"Clarity {feedback.dimensions['clarity']} · "
-                    f"Depth {feedback.dimensions['depth']}"
-                )
-                st.write(f"**Suggestion:** {feedback.suggestions}")
+        if audio_mode:
+    # ------------- recorder -------------
+            try:
+                from st_audiorec import st_audiorec
+                wav_data = st_audiorec()
+            except ModuleNotFoundError:
+                wav_data = None
+                st.warning("Recorder component not installed.")
 
-                # advance
-                interview_agent.next(sess)
-                st.session_state.interview_session = sess
-                _rerun()
-            else:
-                st.warning("Please enter an answer.")
+            rec_key = f"rec_bytes_{q.id}"
+            if wav_data is not None:
+                # convert bytes OR numpy → raw wav bytes once, persist
+                if isinstance(wav_data, (bytes, bytearray)):
+                    st.session_state[rec_key] = wav_data
+                elif isinstance(wav_data, np.ndarray):
+                    buf = io.BytesIO()
+                    sf.write(buf, wav_data, samplerate=16000, format="WAV")
+                    st.session_state[rec_key] = buf.getvalue()
+
+            # optional upload
+            audio_file = st.file_uploader("…or upload WAV/MP3", type=["wav", "mp3"], key=f"aud_{q.id}")
+
+            # ---- debounce flag ----
+            proc_flag = f"processing_{q.id}"
+            if proc_flag not in st.session_state:
+                st.session_state[proc_flag] = False
+
+            btn_disabled = st.session_state[proc_flag]
+            if st.button("Submit Audio", key=f"submit_audio_{q.id}", disabled=btn_disabled):
+                audio_bytes = st.session_state.get(rec_key) or (audio_file.read() if audio_file else None)
+
+                if not audio_bytes:
+                    st.warning("Record or upload audio first.")
+                else:
+                    st.session_state[proc_flag] = True   # lock UI
+                    with st.spinner("Transcribing & scoring…"):
+                        try:
+                            fb = interview_agent.answer(sess, audio_bytes=audio_bytes)
+                            show_feedback(fb)
+                            interview_agent.next(sess)
+                            # clean up
+                            for k in (rec_key, proc_flag):
+                                st.session_state.pop(k, None)
+                            st.session_state.interview_session = sess
+                            _rerun()
+                        except Exception as e:
+                            st.error(f"Audio processing failed: {e}")
+                            st.session_state[proc_flag] = False  # unlock
+
+            if audio_file:
+                st.session_state[rec_key] = audio_file.read()
 
     # -------- history panels --------
     if sess.answers:
@@ -264,4 +309,30 @@ if sess:
 
 # ------------------------------------------------------------------
 st.markdown("---")
-st.caption("M1 Extraction · M2 Gap · M3 Questions · M4 Interview · **M5 Evaluation** complete.")
+
+# ------------------------------------------------------------------
+# 5. Progress Tracker (M6)
+# ------------------------------------------------------------------
+st.markdown("### 5. Progress (M6)")
+
+if st.button("🔄 Refresh Progress"):
+    from app.agents import ProgressAgent
+    pr_agent = ProgressAgent()
+    report = pr_agent.report("candidate_001")
+    st.session_state.progress_report = report
+
+if "progress_report" in st.session_state:
+    report = st.session_state.progress_report
+    st.subheader(f"Overall Avg Score: {report.overall_avg}")
+
+    import pandas as pd
+    df = pd.DataFrame([m.model_dump() for m in report.sessions])
+
+    if df.empty:
+        st.info("No finished interview sessions yet – complete one and refresh.")
+    else:
+        cols_show = ["session_id", "started_at", "ended_at", "question_count", "avg_score"]
+        st.dataframe(df[cols_show], hide_index=True)
+        st.line_chart(df.set_index("session_id")["avg_score"])
+else:
+    st.caption("Run and finish at least one interview, then refresh.")
