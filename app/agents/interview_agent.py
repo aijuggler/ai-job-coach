@@ -6,6 +6,7 @@ from app.services.id_gen import new_session_id
 from app.services.storage import save_session_json
 from app.pipeline import interview, evaluation
 from app.models.answer import AnswerFeedback
+from app.services.audio import transcribe_audio, AudioTranscriptionError
 
 class InterviewAgent:
     """
@@ -18,15 +19,29 @@ class InterviewAgent:
         session = interview.start_session(candidate_id, questions, sess_id)
         return session
 
-    def answer(self, session: InterviewSession, answer_text: str) -> AnswerFeedback:
-        # record answer first
+    def answer(
+        self,
+        session: InterviewSession,
+        answer_text: str | None = None,
+        audio_bytes: bytes | None = None,
+        language: str = "en-US",
+    ):
+        # Determine input mode
+        if audio_bytes and not answer_text:
+            try:
+                answer_text = transcribe_audio(audio_bytes, language=language)
+            except AudioTranscriptionError as e:
+                raise RuntimeError(f"Audio transcription error: {e}")
+        if not answer_text:
+            raise ValueError("No answer text provided.")
+
+        # record + evaluate (unchanged)
         ans = interview.record_answer(session, answer_text)
-        # evaluate
-        q = interview.get_current_question(session)  # this returns current before increment
+        q = interview.get_current_question(session)
         feedback = evaluation.evaluate_answer(q, answer_text)
         session.feedback.append(feedback)
         return feedback
-
+    
     def next(self, session: InterviewSession):
         return interview.next_question(session)
 

@@ -1,6 +1,6 @@
 # app/pipeline/gap.py
 import numpy as np
-from typing import Tuple
+from typing import Tuple , Union
 from app.models.resume import ResumeProfile
 from app.models.job import JobProfile
 from app.models.gap import GapAnalysis, SkillMatch, GapSummary
@@ -13,33 +13,38 @@ AMBIGUOUS_THRESHOLD = 0.70   # >= this and < MATCH_THRESHOLD is ambiguous
 def _normalize_skill(name: str) -> str:
     return name.strip().lower()
 
+def _skill_name(item: Union[str, object]) -> str:
+    """
+    Return lower‑case skill name whether the item is:
+      • a plain string              → "python"
+      • a SkillItem / JobSkill obj  → "python"   (uses .name)
+    """
+    return _normalize_skill(item.name if hasattr(item, "name") else str(item))
+
 def _collect_resume_skills(resume: ResumeProfile) -> list[str]:
-    base = [_normalize_skill(s.name) for s in resume.skills]
-    inferred = [_normalize_skill(s.name) for s in resume.inferred_skills]
-    # Also optional: gather skills listed inside experiences/projects
+    base      = [_skill_name(s) for s in resume.skills]
+    inferred  = [_skill_name(s) for s in resume.inferred_skills]
+
     nested = []
     for exp in resume.experiences:
-        nested.extend([_normalize_skill(s) for s in exp.skills])
+        nested.extend([_skill_name(s) for s in exp.skills])
     for proj in resume.projects:
-        nested.extend([_normalize_skill(s) for s in proj.skills])
-    # Deduplicate preserving first order
-    seen = set()
-    ordered = []
+        nested.extend([_skill_name(s) for s in proj.skills])
+
+    seen, ordered = set(), []
     for skill in base + inferred + nested:
         if skill and skill not in seen:
             seen.add(skill)
             ordered.append(skill)
     return ordered
 
+
 def _collect_job_skills(job: JobProfile) -> list[str]:
     job_skills = []
-    for s in job.must_have_skills:
-        job_skills.append(_normalize_skill(s.name))
-    for s in job.nice_to_have_skills:
-        job_skills.append(_normalize_skill(s.name))
-    # Dedup
-    seen = set()
-    uniq = []
+    job_skills.extend([_skill_name(s) for s in job.must_have_skills])
+    job_skills.extend([_skill_name(s) for s in job.nice_to_have_skills])
+
+    seen, uniq = set(), []
     for s in job_skills:
         if s and s not in seen:
             seen.add(s)

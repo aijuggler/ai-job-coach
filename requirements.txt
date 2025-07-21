@@ -15,3 +15,8 @@ langchain
 python-dotenv
 pydantic-settings
 langchain_openai
+pytest
+azure-cognitiveservices-speech
+streamlit-audiorec
+soundfile
+langgraph
